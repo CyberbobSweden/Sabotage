@@ -1,0 +1,29 @@
+; Engine configuration file.
+; Sabotage! — Godot 4 project.
+; Open this folder in Godot 4.3+ (Project > Import).
+
+config_version=5
+
+[application]
+
+config/name="Sabotage!"
+config/description="A retro 2D spy-duel game. Two rival spies race through a procedurally generated mansion, collect mission items, plant traps and escape."
+run/main_scene="res://scenes/Main.tscn"
+config/features=PackedStringArray("4.3", "GL Compatibility")
+config/icon="res://icon.svg"
+
+[display]
+
+window/size/viewport_width=320
+window/size/viewport_height=180
+window/size/window_width_override=1280
+window/size/window_height_override=720
+window/stretch/mode="viewport"
+window/stretch/aspect="keep"
+window/handheld/orientation=1
+
+[rendering]
+
+textures/canvas_textures/default_texture_filter=0
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
