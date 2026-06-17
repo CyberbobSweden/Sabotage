@@ -356,7 +356,7 @@ func apply_snapshot(d: Dictionary) -> void:
 		var room: Room = rooms[rid]
 		var rd: Dictionary = rooms_in[id_key]
 		var furn_in: Array = rd.get("furniture", [])
-		for i in min(furn_in.size(), room.furniture.size()):
+		for i in mini(furn_in.size(), room.furniture.size()):
 			var fd: Dictionary = furn_in[i]
 			var f: Furniture = room.furniture[i]
 			f.searched = bool(fd.get("searched", false))

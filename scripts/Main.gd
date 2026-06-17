@@ -89,8 +89,12 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
-	var tapped := (event is InputEventScreenTouch and event.pressed) \
-		or (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT)
+	var tapped := false
+	if event is InputEventScreenTouch:
+		tapped = (event as InputEventScreenTouch).pressed
+	elif event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		tapped = mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT
 	if not tapped:
 		return
 	if phase == Phase.MENU:
