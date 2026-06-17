@@ -46,3 +46,39 @@ func has_all(required: Array[String]) -> bool:
 		if r not in inventory:
 			return false
 	return true
+
+# --- networking (dynamic per-spy state) ---
+func to_dict() -> Dictionary:
+	return {
+		"id": id, "name": name, "is_white": is_white, "is_ai": is_ai,
+		"room_id": room_id, "lane_x": lane_x, "facing": facing,
+		"inventory": inventory.duplicate(), "traps_left": traps_left,
+		"selected_trap": selected_trap, "state": state,
+		"death_timer": death_timer, "death_line": death_line,
+		"msg": msg, "msg_timer": msg_timer,
+	}
+
+func apply_dict(d: Dictionary) -> void:
+	room_id = int(d.get("room_id", room_id))
+	lane_x = float(d.get("lane_x", lane_x))
+	facing = int(d.get("facing", facing))
+	var inv: Array[String] = []
+	for v in d.get("inventory", []):
+		inv.append(String(v))
+	inventory = inv
+	traps_left = int(d.get("traps_left", traps_left))
+	selected_trap = int(d.get("selected_trap", selected_trap))
+	state = int(d.get("state", state))
+	death_timer = float(d.get("death_timer", death_timer))
+	death_line = String(d.get("death_line", death_line))
+	msg = String(d.get("msg", msg))
+	msg_timer = float(d.get("msg_timer", msg_timer))
+
+static func from_dict(d: Dictionary) -> Spy:
+	var s := Spy.new()
+	s.id = int(d.get("id", 0))
+	s.name = String(d.get("name", "WHITE"))
+	s.is_white = bool(d.get("is_white", true))
+	s.is_ai = bool(d.get("is_ai", false))
+	s.apply_dict(d)
+	return s

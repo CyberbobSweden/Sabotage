@@ -1,0 +1,68 @@
+name: Deploy web build to GitHub Pages
+
+# Build the Godot web export on GitHub's servers and publish it to GitHub Pages
+# every time you push to the main branch. You never need to open Godot yourself.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # also lets you trigger it manually from the Actions tab
+
+# Permissions the GitHub Pages deploy needs.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time; don't cancel an in-progress one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  GODOT_VERSION: "4.3"
+
+jobs:
+  build:
+    name: Export web build
+    runs-on: ubuntu-latest
+    # This image already contains Godot 4.3 + its export templates.
+    container:
+      image: barichello/godot-ci:4.3.0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Put export templates where Godot looks for them
+        run: |
+          mkdir -p ~/.local/share/godot/export_templates/
+          if [ ! -d ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable ]; then
+            mv /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable \
+               ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          fi
+
+      - name: Export "Web" preset
+        run: |
+          mkdir -p build/web
+          # Import once so Godot resolves resources, then export.
+          godot --headless --import . || true
+          godot --headless --export-release "Web" build/web/index.html
+          # GitHub Pages would otherwise run Jekyll and may skip some files.
+          touch build/web/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

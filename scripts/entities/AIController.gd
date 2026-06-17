@@ -115,7 +115,7 @@ func _act_if_arrived(room: Room) -> void:
 		if f.has_trap() and f.trap.is_known_to(spy.id):
 			gs.detect(spy.id)  # disarm it
 			return
-		if f.has_trap() and randf() < DETECT_CHANCE:
+		if f.has_trap() and randf() < (DETECT_CHANCE - f.trap.detect_difficulty()):
 			gs.detect(spy.id)  # may reveal then avoid next tick
 			return
 		gs.interact(spy.id)
@@ -132,7 +132,7 @@ func _act_if_arrived(room: Room) -> void:
 			if trap.is_known_to(spy.id):
 				gs.detect(spy.id)  # disarm
 				return
-			if randf() < DETECT_CHANCE:
+			if randf() < (DETECT_CHANCE - trap.detect_difficulty()):
 				gs.detect(spy.id)
 				return
 		gs.interact(spy.id)

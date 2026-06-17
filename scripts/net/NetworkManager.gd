@@ -1,72 +1,161 @@
 extends Node
 class_name NetworkManager
-## EXPERIMENTAL LAN multiplayer scaffolding (same Wi-Fi).
+## LAN multiplayer (same Wi-Fi), host-authoritative.
 ##
-## This is a clean starting point for phone-to-phone play over a local network
-## using Godot's high-level multiplayer (ENet). It is intentionally NOT wired
-## into Main.gd yet, so the single-device game always runs. Integrate it when
-## you are ready (see README "Multiplayer").
+## MODEL
+##   * HOST owns the real GameState and runs every rule (Mansion + GameState +
+##     AI if any). It controls WHITE (spy 0).
+##   * CLIENT controls BLACK (spy 1). It does NOT run game rules. Each frame it
+##     sends its intent to the host and renders from the host's snapshots.
+##   * The host serialises a full snapshot ~20x/sec and broadcasts it. Because
+##     the Renderer only ever READS the GameState, the client mirrors and draws
+##     it with no extra work.
 ##
-## Honest status: I could not run/test this in the build environment, so treat
-## it as a documented foundation rather than finished netcode.
+## HONEST STATUS: written carefully but NOT tested on real devices in this
+## environment. LAN netcode usually needs a tweak or two on first contact —
+## if something misbehaves, this is the place to look. Single-device modes
+## (2P hotseat / vs-AI) are unaffected by any of this.
 
-signal connected
-signal hosted
-signal peer_joined(id: int)
-signal connection_failed
+signal client_joined          ## host: a client connected
+signal connected_ok           ## client: reached the host
+signal conn_failed            ## client: could not reach the host
+signal peer_left              ## either side: the other dropped
 
 const DEFAULT_PORT := 9559
-const MAX_CLIENTS := 1   ## 1 host + 1 client = 2 spies
+const MAX_CLIENTS := 1         ## 1 host + 1 client = 2 spies
 
+var role: String = "none"      ## "host" | "client" | "none"
+
+# Host-side: latest intent received from the client.
+var remote_dir: float = 0.0
+var _remote_actions: Array[String] = []
+
+# Client-side: latest world snapshot received from the host.
+var _latest_state: Dictionary = {}
+var _has_new_state := false
+
+func _ready() -> void:
+	# Connect the MultiplayerAPI signals once; they cover both host and client.
+	multiplayer.peer_connected.connect(_on_peer_connected)
+	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
+	multiplayer.connected_to_server.connect(func() -> void: connected_ok.emit())
+	multiplayer.connection_failed.connect(func() -> void: conn_failed.emit())
+	multiplayer.server_disconnected.connect(func() -> void: peer_left.emit())
+
+# ---------------------------------------------------------------------------
+# CONNECTION SETUP
+# ---------------------------------------------------------------------------
 func host_game(port: int = DEFAULT_PORT) -> bool:
+	_reset_peer()
 	var peer := ENetMultiplayerPeer.new()
 	var err := peer.create_server(port, MAX_CLIENTS)
 	if err != OK:
-		push_error("Could not host on port %d (err %d)" % [port, err])
+		push_error("Sabotage: could not host on port %d (err %d)" % [port, err])
 		return false
 	multiplayer.multiplayer_peer = peer
-	multiplayer.peer_connected.connect(_on_peer_connected)
-	hosted.emit()
+	role = "host"
 	return true
 
 func join_game(host_ip: String, port: int = DEFAULT_PORT) -> bool:
+	_reset_peer()
 	var peer := ENetMultiplayerPeer.new()
 	var err := peer.create_client(host_ip, port)
 	if err != OK:
-		push_error("Could not connect to %s:%d (err %d)" % [host_ip, port, err])
+		push_error("Sabotage: could not connect to %s:%d (err %d)" % [host_ip, port, err])
 		return false
 	multiplayer.multiplayer_peer = peer
-	multiplayer.connected_to_server.connect(func() -> void: connected.emit())
-	multiplayer.connection_failed.connect(func() -> void: connection_failed.emit())
+	role = "client"
 	return true
 
-func _on_peer_connected(id: int) -> void:
-	peer_joined.emit(id)
+func shutdown() -> void:
+	_reset_peer()
+	role = "none"
+	remote_dir = 0.0
+	_remote_actions.clear()
+	_latest_state = {}
+	_has_new_state = false
 
-func is_host() -> bool:
-	return multiplayer.is_server()
-
-func disconnect_all() -> void:
+func _reset_peer() -> void:
 	if multiplayer.multiplayer_peer != null:
 		multiplayer.multiplayer_peer.close()
 		multiplayer.multiplayer_peer = null
 
+func is_host() -> bool:
+	return role == "host"
+
+func is_client() -> bool:
+	return role == "client"
+
+func _on_peer_connected(_id: int) -> void:
+	client_joined.emit()
+
+func _on_peer_disconnected(_id: int) -> void:
+	peer_left.emit()
+
+## First non-loopback IPv4 address, shown to the host so the client knows where
+## to connect.
+func local_ip() -> String:
+	for a in IP.get_local_addresses():
+		if a.count(".") == 3 and not a.begins_with("127.") and not a.begins_with("169.254"):
+			return a
+	return "127.0.0.1"
+
 # ---------------------------------------------------------------------------
-# INTEGRATION SKETCH
+# CLIENT -> HOST : input intent
+# Movement is continuous (sent unreliably every frame); actions are one-shots
+# (sent reliably so a trap-plant is never lost).
 # ---------------------------------------------------------------------------
-# The simplest reliable model for this game is HOST-AUTHORITATIVE:
-#   * The host owns the GameState and runs all rules (Mansion + GameState).
-#   * Each client only sends its intent each frame:
-#         @rpc("any_peer", "unreliable_ordered")
-#         func send_input(dir: float, act: bool, trap: bool, det: bool): ...
-#     On the host, apply those to that peer's Spy via gs.move / gs.interact / ...
-#   * The host broadcasts a small world snapshot ~20x/sec:
-#         @rpc("authority", "unreliable_ordered")
-#         func sync_state(packed: Dictionary): ...
-#     Clients render from the latest snapshot (Renderer only reads state, so
-#     this fits the existing architecture cleanly).
-#
-# For play over the INTERNET (not just same Wi-Fi) you additionally need NAT
-# traversal or a relay: host port-forward DEFAULT_PORT, or use a relay such as
-# Godot's WebRTC + a small signalling server, or a hosting service. Pure LAN
-# (this file) needs no extra infrastructure.
+func send_local_input(dir: float, act: bool, trap: bool, det: bool) -> void:
+	if not is_client():
+		return
+	rpc_id(1, "_recv_move", dir)
+	if act:
+		rpc_id(1, "_recv_action", "act")
+	if trap:
+		rpc_id(1, "_recv_action", "trap")
+	if det:
+		rpc_id(1, "_recv_action", "det")
+
+@rpc("any_peer", "call_remote", "unreliable_ordered", 1)
+func _recv_move(dir: float) -> void:
+	remote_dir = dir
+
+@rpc("any_peer", "call_remote", "reliable", 2)
+func _recv_action(kind: String) -> void:
+	_remote_actions.append(kind)
+
+## Host reads-and-clears the queued client actions for this frame.
+func take_remote_actions() -> Array[String]:
+	var a: Array[String] = []
+	for s in _remote_actions:
+		a.append(s)
+	_remote_actions.clear()
+	return a
+
+# ---------------------------------------------------------------------------
+# HOST -> CLIENT : world snapshot
+# ---------------------------------------------------------------------------
+func push_state(state: Dictionary) -> void:
+	if not is_host():
+		return
+	rpc("_recv_state", state)
+
+@rpc("authority", "call_remote", "reliable", 3)
+func _recv_state(state: Dictionary) -> void:
+	_latest_state = state
+	_has_new_state = true
+
+func has_new_state() -> bool:
+	return _has_new_state
+
+func consume_state() -> Dictionary:
+	_has_new_state = false
+	return _latest_state
+
+# ---------------------------------------------------------------------------
+# INTERNET PLAY (beyond LAN)
+# Same-Wi-Fi needs no extra setup. To play across the internet you additionally
+# need either port-forwarding of DEFAULT_PORT on the host's router, or a relay
+# (e.g. Godot WebRTC + a small signalling server, or a hosting service). The
+# host-authoritative design above is unchanged either way.
+# ---------------------------------------------------------------------------

@@ -18,3 +18,18 @@ func _init(p_type: String = "Cabinet", p_lane: float = 0.5) -> void:
 
 func has_trap() -> bool:
 	return trap != null and trap.armed
+
+# --- networking ---
+func to_dict() -> Dictionary:
+	return {
+		"type": type, "lane_x": lane_x, "searched": searched, "item": item,
+		"trap": trap.to_dict() if trap != null else null,
+	}
+
+static func from_dict(d: Dictionary) -> Furniture:
+	var f := Furniture.new(String(d.get("type", "Cabinet")), float(d.get("lane_x", 0.5)))
+	f.searched = bool(d.get("searched", false))
+	f.item = String(d.get("item", ""))
+	var td = d.get("trap", null)
+	f.trap = TrapData.from_dict(td) if td != null else null
+	return f

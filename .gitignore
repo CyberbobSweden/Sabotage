@@ -2,7 +2,8 @@
 .godot/
 .import/
 export.cfg
-export_presets.cfg
+# NOTE: export_presets.cfg is committed on purpose — the GitHub Actions
+# web build needs the "Web" preset. It contains no secrets for this project.
 
 # Exported builds
 build/

@@ -78,3 +78,35 @@ func nearest_door(lane: float, threshold: float = 0.09) -> int:
 
 func door_trap(dir: int) -> TrapData:
 	return door_traps.get(dir, null)
+
+# --- networking ---
+func to_dict() -> Dictionary:
+	var furn: Array = []
+	for f in furniture:
+		furn.append(f.to_dict())
+	var dtraps: Dictionary = {}
+	for dir in door_traps.keys():
+		dtraps[dir] = door_traps[dir].to_dict()
+	# door keys are ints; duplicate the inner dicts so they serialize cleanly
+	var doors_copy: Dictionary = {}
+	for dir in doors.keys():
+		doors_copy[dir] = (doors[dir] as Dictionary).duplicate()
+	return {
+		"id": id, "gx": gx, "gy": gy, "is_exit": is_exit,
+		"furniture": furn, "doors": doors_copy, "door_traps": dtraps,
+	}
+
+static func from_dict(d: Dictionary) -> Room:
+	var r := Room.new(int(d.get("id", 0)), int(d.get("gx", 0)), int(d.get("gy", 0)))
+	r.is_exit = bool(d.get("is_exit", false))
+	var furn: Array[Furniture] = []
+	for fd in d.get("furniture", []):
+		furn.append(Furniture.from_dict(fd))
+	r.furniture = furn
+	var doors_in: Dictionary = d.get("doors", {})
+	for dir in doors_in.keys():
+		r.doors[int(dir)] = (doors_in[dir] as Dictionary).duplicate()
+	var dtraps_in: Dictionary = d.get("door_traps", {})
+	for dir in dtraps_in.keys():
+		r.door_traps[int(dir)] = TrapData.from_dict(dtraps_in[dir])
+	return r

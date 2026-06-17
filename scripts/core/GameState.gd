@@ -5,6 +5,7 @@ class_name GameState
 ## same functions. The renderer only ever *reads* from this object.
 
 signal event(text: String)   ## fired for notable moments (death, win, found item)
+signal sfx(name: String)      ## fired so an output layer can play a sound effect
 
 const MOVE_SPEED := 0.55      ## lane units per second
 const REACH := 0.09           ## how close you must be to interact
@@ -88,10 +89,13 @@ func _search_furniture(spy: Spy, f: Furniture) -> void:
 			spy.inventory.append(f.item)
 			spy.set_msg("Found " + f.item + "!")
 			event.emit(spy.name + " found the " + f.item)
+			sfx.emit("found")
 		else:
 			spy.set_msg("Nothing here...")
+			sfx.emit("empty")
 	else:
 		spy.set_msg("Already searched")
+		sfx.emit("search")
 
 func _use_door(spy: Spy, room: Room, dir: int) -> void:
 	if dir == Room.EXIT_DIR:
@@ -109,6 +113,7 @@ func _use_door(spy: Spy, room: Room, dir: int) -> void:
 	var info: Dictionary = room.doors[dir]
 	spy.room_id = int(info["target"])
 	spy.lane_x = float(info["back_lane"])
+	sfx.emit("door")
 
 func _try_exit(spy: Spy) -> void:
 	if spy.has_all(required_items):
@@ -116,9 +121,11 @@ func _try_exit(spy: Spy) -> void:
 		finished = true
 		finish_reason = spy.name + " escaped with everything!"
 		event.emit(finish_reason)
+		sfx.emit("win")
 	else:
 		var missing := required_items.size() - spy.inventory.size()
 		spy.set_msg("Need " + str(missing) + " more item(s)!")
+		sfx.emit("blocked")
 
 # ---------------------------------------------------------------------------
 # TRAPS  (Step 3)
@@ -142,6 +149,7 @@ func place_trap(spy_id: int) -> void:
 		spy.traps_left -= 1
 		spy.selected_trap = (spy.selected_trap + 1) % TrapData.TYPES.size()
 		spy.set_msg("Planted " + ttype)
+		sfx.emit("plant")
 	elif dir != 999 and dir != Room.EXIT_DIR:
 		if room.door_trap(dir) != null:
 			spy.set_msg("Already trapped")
@@ -150,6 +158,7 @@ func place_trap(spy_id: int) -> void:
 		spy.traps_left -= 1
 		spy.selected_trap = (spy.selected_trap + 1) % TrapData.TYPES.size()
 		spy.set_msg("Trapped door")
+		sfx.emit("plant")
 	else:
 		spy.set_msg("Stand by furniture/door")
 
@@ -177,6 +186,7 @@ func detect(spy_id: int) -> void:
 	if not trap.is_known_to(spy.id):
 		trap.reveal_to(spy.id)
 		spy.set_msg("Trap detected!")
+		sfx.emit("detect")
 	else:
 		# Disarm it.
 		if on_furniture:
@@ -185,6 +195,7 @@ func detect(spy_id: int) -> void:
 			room.door_traps.erase(dir)
 		spy.traps_left += 1
 		spy.set_msg("Trap disarmed")
+		sfx.emit("disarm")
 
 # ---------------------------------------------------------------------------
 # DEATH & RESPAWN  (cartoon deaths)
@@ -194,6 +205,7 @@ func _kill(spy: Spy, trap: TrapData) -> void:
 	spy.death_timer = RESPAWN_TIME
 	spy.death_line = trap.death_line()
 	event.emit(spy.name + " got " + trap.type.to_lower() + "ed! " + trap.death_line())
+	sfx.emit("death")
 	# Drop everything you were carrying — items get re-hidden so they can be
 	# found again, which keeps long matches interesting.
 	_drop_inventory(spy)
@@ -292,3 +304,78 @@ func next_dir_towards(from_id: int, to_id: int) -> int:
 		if node == -1:
 			return 999
 	return came_dir[node]
+
+# ---------------------------------------------------------------------------
+# NETWORKING (host-authoritative LAN play)
+# The host owns the real GameState. It serialises a full snapshot each tick and
+# sends it to the client, which mirrors it for rendering. Because the room
+# layout never changes mid-match, the client builds objects once (deserialize)
+# and then just refreshes the changing fields (apply_snapshot) every tick.
+# ---------------------------------------------------------------------------
+func serialize() -> Dictionary:
+	var rooms_d: Dictionary = {}
+	for id in rooms.keys():
+		rooms_d[id] = rooms[id].to_dict()
+	var spies_d: Array = []
+	for s in spies:
+		spies_d.append(s.to_dict())
+	return {
+		"rooms": rooms_d, "spies": spies_d, "required_items": required_items.duplicate(),
+		"cols": cols, "rows": rows, "start_room_id": start_room_id, "exit_room_id": exit_room_id,
+		"time_left": time_left, "winner": winner, "finished": finished, "finish_reason": finish_reason,
+	}
+
+static func deserialize(d: Dictionary) -> GameState:
+	var gs := GameState.new()
+	gs.cols = int(d.get("cols", 5))
+	gs.rows = int(d.get("rows", 4))
+	gs.start_room_id = int(d.get("start_room_id", 0))
+	gs.exit_room_id = int(d.get("exit_room_id", 0))
+	var req: Array[String] = []
+	for v in d.get("required_items", []):
+		req.append(String(v))
+	gs.required_items = req
+	var rooms_in: Dictionary = d.get("rooms", {})
+	for id in rooms_in.keys():
+		gs.rooms[int(id)] = Room.from_dict(rooms_in[id])
+	var spies_in: Array = d.get("spies", [])
+	var sp: Array[Spy] = []
+	for sd in spies_in:
+		sp.append(Spy.from_dict(sd))
+	gs.spies = sp
+	gs.apply_scalars(d)
+	return gs
+
+## Refresh only the changing fields from a snapshot (client side, per tick).
+func apply_snapshot(d: Dictionary) -> void:
+	var rooms_in: Dictionary = d.get("rooms", {})
+	for id_key in rooms_in.keys():
+		var rid := int(id_key)
+		if not rooms.has(rid):
+			continue
+		var room: Room = rooms[rid]
+		var rd: Dictionary = rooms_in[id_key]
+		var furn_in: Array = rd.get("furniture", [])
+		for i in min(furn_in.size(), room.furniture.size()):
+			var fd: Dictionary = furn_in[i]
+			var f: Furniture = room.furniture[i]
+			f.searched = bool(fd.get("searched", false))
+			f.item = String(fd.get("item", ""))
+			var td = fd.get("trap", null)
+			f.trap = TrapData.from_dict(td) if td != null else null
+		room.door_traps.clear()
+		var dtraps_in: Dictionary = rd.get("door_traps", {})
+		for dir in dtraps_in.keys():
+			room.door_traps[int(dir)] = TrapData.from_dict(dtraps_in[dir])
+	var spies_in: Array = d.get("spies", [])
+	for sd in spies_in:
+		var s := get_spy(int(sd.get("id", -1)))
+		if s != null:
+			s.apply_dict(sd)
+	apply_scalars(d)
+
+func apply_scalars(d: Dictionary) -> void:
+	time_left = float(d.get("time_left", time_left))
+	winner = int(d.get("winner", winner))
+	finished = bool(d.get("finished", finished))
+	finish_reason = String(d.get("finish_reason", finish_reason))

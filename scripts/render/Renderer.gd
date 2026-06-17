@@ -55,14 +55,14 @@ static func _draw_room(ci: CanvasItem, font: Font, gs: GameState, room: Room, vi
 		_draw_door(ci, dx, walk_y, is_exit)
 		var trap := room.door_trap(dir)
 		if trap != null and trap.armed and trap.is_known_to(viewer.id):
-			_draw_trap_marker(ci, dx, walk_y - 18.0)
+			_draw_trap_marker(ci, font, trap, dx, walk_y - 18.0)
 
 	# Furniture
 	for f in room.furniture:
 		var fx: float = lane_to_x.call(f.lane_x)
 		_draw_furniture(ci, font, f, fx, walk_y)
 		if f.has_trap() and f.trap.is_known_to(viewer.id):
-			_draw_trap_marker(ci, fx, walk_y - 16.0)
+			_draw_trap_marker(ci, font, f.trap, fx, walk_y - 16.0)
 
 	# Spies that are in this room (other spy first, viewer on top)
 	for spy in gs.spies:
@@ -113,13 +113,16 @@ static func _draw_furniture(ci: CanvasItem, font: Font, f: Furniture, x: float, 
 	ci.draw_line(Vector2(x - w * 0.5, base_y - h * 0.5), Vector2(x + w * 0.5, base_y - h * 0.5),
 		Palette.BLACK, 1.0)
 
-static func _draw_trap_marker(ci: CanvasItem, x: float, y: float) -> void:
-	# Blinking red warning triangle.
+static func _draw_trap_marker(ci: CanvasItem, font: Font, trap: TrapData, x: float, y: float) -> void:
+	# Warning triangle, coloured per trap type, with a one-letter tag.
+	var col := trap.marker_color()
 	var p0 := Vector2(x, y - 4)
 	var p1 := Vector2(x - 4, y + 3)
 	var p2 := Vector2(x + 4, y + 3)
-	ci.draw_colored_polygon(PackedVector2Array([p0, p1, p2]), Palette.LIGHT_RED)
+	ci.draw_colored_polygon(PackedVector2Array([p0, p1, p2]), col)
 	ci.draw_polyline(PackedVector2Array([p0, p1, p2, p0]), Palette.BLACK, 1.0)
+	ci.draw_string(font, Vector2(x - 2.0, y - 5.0), trap.tag(),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 7, col)
 
 static func _draw_spy(ci: CanvasItem, font: Font, spy: Spy, x: float, base_y: float) -> void:
 	var body := Palette.WHITE if spy.is_white else Palette.DARK_GREY
