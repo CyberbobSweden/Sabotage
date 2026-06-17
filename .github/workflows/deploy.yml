@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     # This image already contains Godot 4.3 + its export templates.
     container:
-      image: barichello/godot-ci:4.3.0
+      image: barichello/godot-ci:4.3
     steps:
       - name: Checkout
         uses: actions/checkout@v4
