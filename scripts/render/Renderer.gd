@@ -51,7 +51,7 @@ static func _draw_room(ci: CanvasItem, font: Font, gs: GameState, room: Room, vi
 	for dir in room.doors.keys():
 		var info: Dictionary = room.doors[dir]
 		var dx: float = lane_to_x.call(float(info["lane"]))
-		var is_exit := dir == Room.EXIT_DIR
+		var is_exit: bool = dir == Room.EXIT_DIR
 		_draw_door(ci, dx, walk_y, is_exit)
 		var trap := room.door_trap(dir)
 		if trap != null and trap.armed and trap.is_known_to(viewer.id):
